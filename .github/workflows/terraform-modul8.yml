@@ -1,0 +1,131 @@
+# =============================================================================
+#  .github/workflows/terraform-modul8.yml  –  LEVERINGSARBEIDSFLYTEN
+# -----------------------------------------------------------------------------
+#    pull_request  →  build  →  plan                      (leser, endrer ingenting)
+#    push til main →  build  →  apply-dev  →  apply-prod  (skriver, prod bak godkjenning)
+#
+#  Ingenting i fila er en hemmelighet. De tre ID-ene ligger som Variables i
+#  GitHub, og innloggingen skjer med OIDC mot de federerte credentialene dine.
+# =============================================================================
+
+name: terraform-modul8
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'modul8/**'
+      - '.github/workflows/terraform-modul8.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'modul8/**'
+      - '.github/workflows/terraform-modul8.yml'
+
+# Én kjøring av gangen mot den samme staten. cancel-in-progress må være false:
+# en apply som drepes midt i, etterlater en hengende lås.
+concurrency:
+  group: terraform-modul8
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # retten til å be om et OIDC-token
+  contents: read  # nok til å sjekke ut koden
+
+defaults:
+  run:
+    working-directory: modul8
+
+env:
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  # Kvalitetsporten. Logger ikke inn i Azure, og kjører på begge hendelsene.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Formatering
+        run: terraform fmt -check -recursive
+
+      # -backend=false: validate trenger providerne, ikke staten.
+      - name: Init uten backend
+        run: terraform init -backend=false
+
+      - name: Validering
+        run: terraform validate
+
+  # Forhåndsvisning på pull request. Endrer ingenting.
+  plan:
+    needs: build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # Ikke en utrulling, men en identitet: subject blir ...:environment:dev.
+    # Uten linja blir det ...:pull_request, og innloggingen feiler (AADSTS70021).
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Azure/login@v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Init mot dev-staten
+        run: terraform init -backend-config=backend.hcl -backend-config="key=modul8/dev/network.tfstate"
+
+      - name: Plan
+        run: terraform plan -var-file="dev.tfvars" -no-color
+
+  # Utrulling til dev ved merge til main.
+  apply-dev:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Azure/login@v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Init mot dev-staten
+        run: terraform init -backend-config=backend.hcl -backend-config="key=modul8/dev/network.tfstate"
+
+      - name: Apply
+        run: terraform apply -auto-approve -var-file="dev.tfvars"
+
+  # Utrulling til prod etter dev. Miljøet prod har «Required reviewers» i
+  # GitHub, så jobben venter på at noen trykker «Review deployments».
+  apply-prod:
+    needs: apply-dev
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Azure/login@v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Init mot prod-staten
+        run: terraform init -backend-config=backend.hcl -backend-config="key=modul8/prod/network.tfstate"
+
+      - name: Apply
+        run: terraform apply -auto-approve -var-file="prod.tfvars"
+
+# Ingen destroy-jobb: pipelinen bygger, men river ikke. Opprydding gjøres for
+# hånd, prod før dev.
