@@ -1,0 +1,17 @@
+# =============================================================================
+#  modules/network/.checkov.yaml  –  SLIK KJØRER CHECKOV
+# -----------------------------------------------------------------------------
+#  Checkov leser fila fra mappa den kjøres i. Nøklene er kommandolinjeflaggene
+#  uten "--", så checkov -d . her betyr det samme som
+#
+#    checkov -d . --framework terraform --compact --quiet
+#
+#  Legg merke til det som IKKE står her: ingen skip-check og ingen soft-fail.
+#  K5 krever ingen FAILED og ingen skip uten begrunnelse. Den enkleste måten å
+#  oppfylle begge på, er å rette koden – og det er det F18 gjør.
+# =============================================================================
+
+framework:
+  - terraform # bare Terraform – ikke YAML, Dockerfiler osv.
+compact: true # ikke vis kodeutdraget for hvert funn
+quiet: true   # vis bare det som feiler

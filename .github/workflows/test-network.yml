@@ -1,0 +1,93 @@
+# =============================================================================
+#  .github/workflows/test-network.yml  –  DEN LOKALE LØKKEN SOM PORT
+# -----------------------------------------------------------------------------
+#  sjekk.ps1, steg for steg, på en runner:
+#
+#    fmt → init → validate → tflint → checkov → test
+#
+#  Ingen regler står i denne fila. .tflint.hcl, .checkov.yaml og tests/ ligger
+#  i modules/network/ og leses derfra – akkurat som lokalt. Det eneste fila
+#  bestemmer selv, er VERSJONENE, og de skal være de samme som på din maskin.
+#
+#  Sammenlign med build-jobben i modul 7: samme idé, flere verktøy, og ingen
+#  innlogging i Azure.
+# =============================================================================
+
+name: test-network
+
+on:
+  # Alle pull requests mot main – og INGEN paths:-filter.
+  #
+  # I modul 7 fikk workflowen paths: ['modul7/**'], så den bare startet når
+  # noe i modul7/ ble endret. Her ville det samme filteret vært en felle. En
+  # påkrevd sjekk må rapportere på HVER pull request. Hopper workflowen over
+  # en PR fordi ingen fil i modules/network/ er endret, rapporterer den
+  # ingenting – og GitHub venter for alltid: «Expected — Waiting for status to
+  # be reported». Jobben er rask og gratis, så den får kjøre på alt.
+  pull_request:
+    branches: [main]
+
+  # Knappen «Run workflow» under Actions – nyttig for å se at fila virker før
+  # du åpner en pull request.
+  workflow_dispatch:
+
+permissions:
+  # Bare lesetilgang til koden. Ingen id-token: write, fordi ingen av sjekkene
+  # logger inn i Azure. Det betyr også: ingen environment og ingen federated
+  # credential. Jobben kan ikke endre noe, selv om den ville.
+  contents: read
+
+jobs:
+  # Jobbnavnet er det ruleset-en i H22 søker opp under «Add checks». Én jobb
+  # er én statussjekk å gjøre påkrevd.
+  test-network:
+    runs-on: ubuntu-latest
+
+    # Erstatter Push-Location i sjekk.ps1. Alle run-steg står i modulmappa og
+    # finner .tflint.hcl og .checkov.yaml der.
+    defaults:
+      run:
+        working-directory: modules/network
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # De tre versjonene under er de du noterte i kap. 5. Grønt lokalt og rødt
+      # her – eller omvendt – er nesten alltid en versjon som ikke stemmer.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.4" # = terraform version lokalt
+
+      - uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0 # = tflint --version lokalt
+
+      - name: Installer Checkov
+        run: pipx install checkov==3.3.26 # = checkov --version lokalt
+
+      # Fra her: samme rekkefølge og samme kommandoer som sjekk.ps1. Feiler ett
+      # steg, hoppes resten over – det er exit 1 i skriptet.
+      - name: fmt
+        run: terraform fmt -check -diff -recursive
+
+      - name: init
+        run: terraform init -backend=false -input=false
+
+      - name: validate
+        run: terraform validate
+
+      # tflint --init laster ned azurerm-regelsettet fra GitHub. Uten token
+      # deler runneren en anonym kvote med alle andre, og stopper på «API rate
+      # limit exceeded». github.token finnes alltid – du lager den ikke selv.
+      - name: tflint
+        run: |
+          tflint --init
+          tflint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: checkov
+        run: checkov -d .
+
+      - name: test
+        run: terraform test

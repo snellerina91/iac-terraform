@@ -1,0 +1,25 @@
+# =============================================================================
+#  .gitignore  –  PÅ ROTA, FRA ØVING 7, MED ÉN LINJE LAGT TIL
+# -----------------------------------------------------------------------------
+#  Mønstrene over den siste blokka er de samme som i øving 7 (kommentarene
+#  er kortet ned). Låsefila til modul7/ og modul8/ står fortsatt IKKE her.
+# =============================================================================
+
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+.terraform/
+
+*.tfplan
+crash.log
+
+# NY I ØVING 9 (A3).
+#
+# terraform init -backend=false i modules/network/ lager en låsefil der også.
+# Den skal IKKE inn. Det er rotmodulen som velger providerversjonen – også
+# for modulene den henter – så en låsefil i en child-modul blir aldri lest av
+# noen som bruker modulen. Den ville bare vist en versjon som ikke gjelder.
+#
+# Mønsteret er ankret til modules/, så modul7/ og modul8/ beholder sine.
+modules/**/.terraform.lock.hcl
